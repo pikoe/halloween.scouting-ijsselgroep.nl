@@ -88,126 +88,147 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		}
 
 		if (!$errors) {
-			$databaseSettings = [
-				'host' => getenv('DB_HOST'),
-				'name' => getenv('DB_NAME'),
-				'user' => getenv('DB_USER'),
-				'password' => getenv('DB_PASSWORD'),
-			];
+			$envPath = dirname(__DIR__) . '/.env';
+			$envSettings = is_readable($envPath)
+				? parse_ini_file($envPath, false, INI_SCANNER_RAW)
+				: false;
 
-			if (in_array(false, $databaseSettings, true) || in_array('', $databaseSettings, true)) {
+			if ($envSettings === false) {
 				$errors[] = 'Aanmelden is momenteel niet beschikbaar. Probeer het later opnieuw of mail naar info@scouting-ijsselgroep.nl.';
-				error_log('Registration database settings are incomplete.');
+				error_log('Registration database settings could not be loaded from .env.');
 			} else {
-				try {
-					$pdo = new PDO(
-						'mysql:host=' . $databaseSettings['host'] . ';dbname=' . $databaseSettings['name'] . ';charset=utf8mb4',
+				$databaseSettings = [
+					'connection' => $envSettings['DB_CONNECTION'] ?? '',
+					'host' => $envSettings['DB_HOST'] ?? '',
+					'port' => filter_var($envSettings['DB_PORT'] ?? null, FILTER_VALIDATE_INT, [
+						'options' => ['min_range' => 1, 'max_range' => 65535],
+					]),
+					'name' => $envSettings['DB_DATABASE'] ?? '',
+					'user' => $envSettings['DB_USERNAME'] ?? '',
+					'password' => $envSettings['DB_PASSWORD'] ?? '',
+				];
+
+				if (
+					$databaseSettings['connection'] !== 'mysql'
+					|| $databaseSettings['port'] === false
+					|| in_array('', [
+						$databaseSettings['host'],
+						$databaseSettings['name'],
 						$databaseSettings['user'],
 						$databaseSettings['password'],
-						[
-							PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-							PDO::ATTR_EMULATE_PREPARES => false,
-						]
-					);
-					$pdo->exec(
-						'CREATE TABLE IF NOT EXISTS registrations (
-							id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-							age_group VARCHAR(5) NOT NULL,
-							start_time TIME NOT NULL,
-							group_name VARCHAR(100) NOT NULL,
-							email VARCHAR(254) NOT NULL,
-							phone VARCHAR(30) NOT NULL,
-							adult_name VARCHAR(120) NULL,
-							remarks VARCHAR(2500) NOT NULL DEFAULT \'\',
-							created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-						) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-					);
-					$remarksColumn = $pdo->query("SHOW COLUMNS FROM registrations LIKE 'remarks'");
-					if (!$remarksColumn->fetch()) {
-						$pdo->exec('ALTER TABLE registrations ADD COLUMN remarks VARCHAR(2500) NOT NULL DEFAULT \'\'');
-					}
-					$pdo->exec(
-						'CREATE TABLE IF NOT EXISTS registration_participants (
-							id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-							registration_id BIGINT UNSIGNED NOT NULL,
-							participant_number TINYINT UNSIGNED NOT NULL,
-							age TINYINT UNSIGNED NOT NULL,
-							dietary_notes VARCHAR(500) NOT NULL DEFAULT \'\',
-							CONSTRAINT fk_registration_participants_registration
-								FOREIGN KEY (registration_id) REFERENCES registrations(id) ON DELETE CASCADE,
-							UNIQUE KEY uq_registration_participant (registration_id, participant_number)
-						) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-					);
+					], true)
+				) {
+					$errors[] = 'Aanmelden is momenteel niet beschikbaar. Probeer het later opnieuw of mail naar info@scouting-ijsselgroep.nl.';
+					error_log('Registration database settings are incomplete or invalid.');
+				} else {
+					try {
+						$pdo = new PDO(
+							'mysql:host=' . $databaseSettings['host'] . ';port=' . $databaseSettings['port'] . ';dbname=' . $databaseSettings['name'] . ';charset=utf8mb4',
+							$databaseSettings['user'],
+							$databaseSettings['password'],
+							[
+								PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+								PDO::ATTR_EMULATE_PREPARES => false,
+							]
+						);
+						$pdo->exec(
+							'CREATE TABLE IF NOT EXISTS registrations (
+								id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+								age_group VARCHAR(5) NOT NULL,
+								start_time TIME NOT NULL,
+								group_name VARCHAR(100) NOT NULL,
+								email VARCHAR(254) NOT NULL,
+								phone VARCHAR(30) NOT NULL,
+								adult_name VARCHAR(120) NULL,
+								remarks VARCHAR(2500) NOT NULL DEFAULT \'\',
+								created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+							) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+						);
+						$remarksColumn = $pdo->query("SHOW COLUMNS FROM registrations LIKE 'remarks'");
+						if (!$remarksColumn->fetch()) {
+							$pdo->exec('ALTER TABLE registrations ADD COLUMN remarks VARCHAR(2500) NOT NULL DEFAULT \'\'');
+						}
+						$pdo->exec(
+							'CREATE TABLE IF NOT EXISTS registration_participants (
+								id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+								registration_id BIGINT UNSIGNED NOT NULL,
+								participant_number TINYINT UNSIGNED NOT NULL,
+								age TINYINT UNSIGNED NOT NULL,
+								CONSTRAINT fk_registration_participants_registration
+									FOREIGN KEY (registration_id) REFERENCES registrations(id) ON DELETE CASCADE,
+								UNIQUE KEY uq_registration_participant (registration_id, participant_number)
+							) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+						);
 
-					$pdo->beginTransaction();
-					$registrationQuery = $pdo->prepare(
-						'INSERT INTO registrations (age_group, start_time, group_name, email, phone, adult_name, remarks)
-						VALUES (:age_group, :start_time, :group_name, :email, :phone, :adult_name, :remarks)'
-					);
-					$registrationQuery->execute([
-						'age_group' => $ageGroup,
-						'start_time' => $startTime,
-						'group_name' => $groupName,
-						'email' => $email,
-						'phone' => $phone,
-						'adult_name' => $ageGroup === '7-12' ? $adultName : null,
-						'remarks' => $remarks,
-					]);
-					$registrationId = $pdo->lastInsertId();
-					$participantQuery = $pdo->prepare(
-						'INSERT INTO registration_participants (registration_id, participant_number, age, dietary_notes)
-						VALUES (:registration_id, :participant_number, :age, :dietary_notes)'
-					);
-					foreach ($participants as $participant) {
-						$participantQuery->execute([
-							'registration_id' => $registrationId,
-							'participant_number' => $participant['number'],
-							'age' => $participant['age'],
-							'dietary_notes' => '',
+						$pdo->beginTransaction();
+						$registrationQuery = $pdo->prepare(
+							'INSERT INTO registrations (age_group, start_time, group_name, email, phone, adult_name, remarks)
+							VALUES (:age_group, :start_time, :group_name, :email, :phone, :adult_name, :remarks)'
+						);
+						$registrationQuery->execute([
+							'age_group' => $ageGroup,
+							'start_time' => $startTime,
+							'group_name' => $groupName,
+							'email' => $email,
+							'phone' => $phone,
+							'adult_name' => $ageGroup === '7-12' ? $adultName : null,
+							'remarks' => $remarks,
 						]);
-					}
-					$pdo->commit();
+						$registrationId = $pdo->lastInsertId();
+						$participantQuery = $pdo->prepare(
+							'INSERT INTO registration_participants (registration_id, participant_number, age)
+							VALUES (:registration_id, :participant_number, :age)'
+						);
+						foreach ($participants as $participant) {
+							$participantQuery->execute([
+								'registration_id' => $registrationId,
+								'participant_number' => $participant['number'],
+								'age' => $participant['age'],
+							]);
+						}
+						$pdo->commit();
 
-					$mailBody = [
-						"Nieuwe aanmelding voor de Halloween spooktocht",
-						'Leeftijdsgroep: ' . $ageGroup . ' jaar (start ' . $startTime . ')',
-						'Groepsnaam: ' . $groupName,
-						'E-mail: ' . $email,
-						'Telefoonnummer: ' . $phone,
-					];
-					if ($ageGroup === '7-12') {
-						$mailBody[] = 'Volwassen begeleider: ' . $adultName;
-					}
-					$mailBody[] = '';
-					$mailBody[] = 'Deelnemers:';
-					foreach ($participants as $participant) {
-						$mailBody[] = 'Deelnemer ' . $participant['number'] . ': ' . $participant['age'] . ' jaar';
-					}
-					$mailBody[] = 'Opmerkingen (allergieën/diëten): ' . ($remarks !== '' ? $remarks : 'Geen opgegeven');
+						$mailBody = [
+							"Nieuwe aanmelding voor de Halloween spooktocht",
+							'Leeftijdsgroep: ' . $ageGroup . ' jaar (start ' . $startTime . ')',
+							'Groepsnaam: ' . $groupName,
+							'E-mail: ' . $email,
+							'Telefoonnummer: ' . $phone,
+						];
+						if ($ageGroup === '7-12') {
+							$mailBody[] = 'Volwassen begeleider: ' . $adultName;
+						}
+						$mailBody[] = '';
+						$mailBody[] = 'Deelnemers:';
+						foreach ($participants as $participant) {
+							$mailBody[] = 'Deelnemer ' . $participant['number'] . ': ' . $participant['age'] . ' jaar';
+						}
+						$mailBody[] = 'Opmerkingen (allergieën/diëten): ' . ($remarks !== '' ? $remarks : 'Geen opgegeven');
 
-					$mailSent = mail(
-						'info@scouting-ijsselgroep.nl',
-						'Nieuwe aanmelding Halloween spooktocht',
-						implode("\n", $mailBody),
-						[
-							'From' => 'Halloween spooktocht <no-reply@scouting-ijsselgroep.nl>',
-							'Reply-To' => $email,
-							'Content-Type' => 'text/plain; charset=UTF-8',
-						]
-					);
+						$mailSent = mail(
+							'dennis_veeneman@hotmail.com',
+							'Nieuwe aanmelding Halloween spooktocht',
+							implode("\n", $mailBody),
+							[
+								'From' => 'Halloween spooktocht <no-reply@pikoe.nl>',
+								'Reply-To' => $email,
+								'Content-Type' => 'text/plain; charset=UTF-8',
+							]
+						);
 
-					$_SESSION['form_message'] = $mailSent
-						? 'Bedankt! De aanmelding is opgeslagen en doorgestuurd.'
-						: 'De aanmelding is opgeslagen, maar de e-mailmelding kon niet worden verzonden. Neem contact op via info@scouting-ijsselgroep.nl.';
-					$_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-					header('Location: ' . $_SERVER['SCRIPT_NAME'] . '#aanmelden', true, 303);
-					exit;
-				} catch (PDOException $exception) {
-					if (isset($pdo) && $pdo->inTransaction()) {
-						$pdo->rollBack();
+						$_SESSION['form_message'] = $mailSent
+							? 'Bedankt! De aanmelding is opgeslagen en doorgestuurd.'
+							: 'De aanmelding is opgeslagen, maar de e-mailmelding kon niet worden verzonden. Neem contact op via info@scouting-ijsselgroep.nl.';
+						$_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+						header('Location: ' . $_SERVER['SCRIPT_NAME'] . '#aanmelden', true, 303);
+						exit;
+					} catch (PDOException $exception) {
+						if (isset($pdo) && $pdo->inTransaction()) {
+							$pdo->rollBack();
+						}
+						error_log('Registration database error: ' . $exception->getMessage());
+						$errors[] = 'De aanmelding kon niet worden opgeslagen. Probeer het later opnieuw of mail naar info@scouting-ijsselgroep.nl.';
 					}
-					error_log('Registration database error: ' . $exception->getMessage());
-					$errors[] = 'De aanmelding kon niet worden opgeslagen. Probeer het later opnieuw of mail naar info@scouting-ijsselgroep.nl.';
 				}
 			}
 		}
@@ -488,7 +509,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		<div class="info-block">
 			<h2>Wat kost het: € 5,- per persoon</h2>
 			<img class="pesos" src="img/pesos-mexican.png" alt="Pesos Mexican" />
-			<p>De kosten voor deelname zijn € 5,- per persoon. Dit kan contant worden betaald bij de start van de spooktocht.</p>
+			<p>De kosten voor deelname zijn € 5,- per persoon (deelnemers en begeleiders). Dit kan contant worden betaald bij de start van de spooktocht.</p>
+			<p>Leden van scouting IJsselgroep en scouting Kompasnaald kunnen gratis deelnemen.</p>
 		</div>
 
 
