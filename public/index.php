@@ -286,6 +286,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 			margin: 4rem 0 0 0;
 		}
 
+		.info-block.logos {
+			display: flex;
+			flex-wrap: wrap;
+			justify-content: center;
+			gap: 1rem;
+			text-align: center;
+		}
+
+		.info-block.logos h2 {
+			flex-basis: 100%;
+		}
+
+		.info-block.logos > a {
+			width: min(35vw, 150px);
+		}
+
+		.info-block.logos img {
+			margin: 0;
+		}
+
 		img.zandloper {
 			float: right;
 			width: min(25%, 100px);
@@ -570,6 +590,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 			</form>
 		</div>
 
+		<div class="info-block logos">
+			<h2>Mogelijk gemaakt door</h2>
+
+			<a href="https://www.scouting-ijsselgroep.nl" target="_blank">
+				<img class="" src="img/ijsselgroep.webp" alt="Scouting IJsselgroep logo" />
+			</a>
+			<a href="https://scoutingkompasnaald.nl" target="_blank">
+				<img class="" src="img/scouting-kompasnaald.png" alt="Scouting Kompasnaald logo" />
+			</a>
+		</div>
 	</main>
 	<script>
 		const ageGroupInputs = document.querySelectorAll('input[name="age_group"]');
