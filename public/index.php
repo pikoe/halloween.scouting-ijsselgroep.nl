@@ -189,7 +189,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 						$pdo->commit();
 
 						$mailBody = [
-							"Nieuwe aanmelding voor de Halloween spooktocht",
+							'Bedankt voor de aanmelding!',
+							'',
+							'We zien je graag 24 oktober, Kwekerijweg 5 in Gorssel.',
+							'De kosten zijn 5,00 pp, graag ontvangen we dat contant voorafgaand aan de spooktocht.',
+							'',
+							'Hieronder een kopie van de aanmelding:',
+							'',
+							'Nieuwe aanmelding voor de Halloween spooktocht',
 							'Leeftijdsgroep: ' . $ageGroup . ' jaar (start ' . $startTime . ')',
 							'Groepsnaam: ' . $groupName,
 							'E-mail: ' . $email,
@@ -204,23 +211,119 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 							$mailBody[] = 'Deelnemer ' . $participant['number'] . ': ' . $participant['age'] . ' jaar';
 						}
 						$mailBody[] = 'Opmerkingen (allergieën/diëten): ' . ($remarks !== '' ? $remarks : 'Geen opgegeven');
+						$mailBody[] = '';
+						$mailBody[] = 'Meer info: https://halloween.scouting-ijsselgroep.nl';
+						$mailBody[] = '';
+						$mailBody[] = 'Vriendelijke groeten en tot snel,';
+						$mailBody[] = 'Scouting IJsselgroep en Scouting Kompasnaald Gorssel';
 
-						$mailSent = mail(
-							'dennis_veeneman@hotmail.com',
-							'Nieuwe aanmelding Halloween spooktocht',
-							implode("\n", $mailBody),
-							[
-								'From' => 'Halloween spooktocht <no-reply@pikoe.nl>',
-								'Reply-To' => $email,
-								'Content-Type' => 'text/plain; charset=UTF-8',
-							]
-						);
+						$mailSent = false;
+						try {
+							$mailSettings = [
+								'mailer' => $envSettings['MAIL_MAILER'] ?? '',
+								'from' => $envSettings['MAIL_FROM'] ?? '',
+								'from_name' => $envSettings['MAIL_FROM_NAME'] ?? '',
+								'copy_to' => $envSettings['MAIL_COPY_TO'] ?? '',
+								'blind_copy_to' => $envSettings['MAIL_BLIND_COPY_TO'] ?? '',
+								'reply_to' => $envSettings['MAIL_REPLY_TO'] ?? '',
+								'host' => $envSettings['MAIL_HOST'] ?? '',
+								'port' => filter_var($envSettings['MAIL_PORT'] ?? null, FILTER_VALIDATE_INT, [
+									'options' => ['min_range' => 1, 'max_range' => 65535],
+								]),
+								'username' => $envSettings['MAIL_USERNAME'] ?? '',
+								'password' => $envSettings['MAIL_PASSWORD'] ?? '',
+							];
+
+							if (
+								$mailSettings['mailer'] !== 'smtp'
+								|| $mailSettings['port'] === false
+								|| !filter_var($mailSettings['from'], FILTER_VALIDATE_EMAIL)
+								|| !filter_var($mailSettings['copy_to'], FILTER_VALIDATE_EMAIL)
+								|| (
+									$mailSettings['blind_copy_to'] !== ''
+									&& !filter_var($mailSettings['blind_copy_to'], FILTER_VALIDATE_EMAIL)
+								)
+								|| !filter_var($mailSettings['reply_to'], FILTER_VALIDATE_EMAIL)
+								|| $mailSettings['from_name'] === ''
+								|| !preg_match('/^[A-Za-z0-9.-]+$/D', $mailSettings['host'])
+								|| $mailSettings['username'] === ''
+								|| $mailSettings['password'] === ''
+								|| !function_exists('curl_init')
+							) {
+								throw new RuntimeException('SMTP settings are incomplete or invalid.');
+							}
+
+							$recipients = [$email, $mailSettings['copy_to']];
+							if ($mailSettings['blind_copy_to'] !== '') {
+								$recipients[] = $mailSettings['blind_copy_to'];
+							}
+
+							$headers = [
+								'Date: ' . date(DATE_RFC2822),
+								'To: <' . $email . '>',
+								'Cc: <' . $mailSettings['copy_to'] . '>',
+								'From: ' . mb_encode_mimeheader($mailSettings['from_name'], 'UTF-8', 'B') . ' <' . $mailSettings['from'] . '>',
+								'Reply-To: <' . $mailSettings['reply_to'] . '>',
+								'Subject: ' . mb_encode_mimeheader('Nieuwe aanmelding Halloween spooktocht', 'UTF-8', 'B'),
+								'MIME-Version: 1.0',
+								'Content-Type: text/plain; charset=UTF-8',
+								'Content-Transfer-Encoding: 8bit',
+							];
+							$messageBody = preg_replace('/\r\n|\r|\n/', "\r\n", implode("\n", $mailBody));
+							if ($messageBody === null) {
+								throw new RuntimeException('Could not format the SMTP message body.');
+							}
+							$message = implode("\r\n", $headers) . "\r\n\r\n" . $messageBody . "\r\n";
+							$messageOffset = 0;
+							$curl = curl_init('smtp://' . $mailSettings['host'] . ':' . $mailSettings['port']);
+							if ($curl === false) {
+								throw new RuntimeException('Could not initialize the SMTP connection.');
+							}
+
+							try {
+								$optionsSet = curl_setopt_array($curl, [
+									CURLOPT_USE_SSL => CURLUSESSL_ALL,
+									CURLOPT_USERNAME => $mailSettings['username'],
+									CURLOPT_PASSWORD => $mailSettings['password'],
+									CURLOPT_MAIL_FROM => '<' . $mailSettings['from'] . '>',
+									CURLOPT_MAIL_RCPT => array_map(
+										static fn (string $recipient): string => '<' . $recipient . '>',
+										array_unique($recipients)
+									),
+									CURLOPT_UPLOAD => true,
+									CURLOPT_INFILESIZE => strlen($message),
+									CURLOPT_READFUNCTION => static function ($handle, $stream, int $length) use (&$messageOffset, $message): string {
+										$chunk = substr($message, $messageOffset, $length);
+										$messageOffset += strlen($chunk);
+										return $chunk;
+									},
+									CURLOPT_CONNECTTIMEOUT => 10,
+									CURLOPT_TIMEOUT => 30,
+								]);
+								if (!$optionsSet) {
+									throw new RuntimeException('Could not configure the SMTP connection.');
+								}
+
+								if (curl_exec($curl) === false) {
+									throw new RuntimeException('SMTP delivery failed: ' . curl_error($curl));
+								}
+								$smtpResponseCode = curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+								if ($smtpResponseCode < 200 || $smtpResponseCode >= 300) {
+									throw new RuntimeException('SMTP server rejected the message with response code ' . $smtpResponseCode . '.');
+								}
+								$mailSent = true;
+							} finally {
+								curl_close($curl);
+							}
+						} catch (RuntimeException $exception) {
+							error_log('Registration email error: ' . $exception->getMessage());
+						}
 
 						$_SESSION['form_message'] = $mailSent
 							? 'Bedankt! De aanmelding is opgeslagen en doorgestuurd.'
 							: 'De aanmelding is opgeslagen, maar de e-mailmelding kon niet worden verzonden. Neem contact op via info@scouting-ijsselgroep.nl.';
 						$_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-						header('Location: ' . $_SERVER['SCRIPT_NAME'] . '#aanmelden', true, 303);
+						header('Location: /#aanmelden', true, 303);
 						exit;
 					} catch (PDOException $exception) {
 						if (isset($pdo) && $pdo->inTransaction()) {
