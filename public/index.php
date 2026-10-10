@@ -584,8 +584,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
 	<main>
 		<h1>Halloween spooktocht</h1>
-		<p>Halloween zit er aan te komen, de tijd om te griezelen! Daarom organiseert scouting IJsselgroep op zaterdagavond 24 oktober een spooktocht voor iedereen van 7 tot 16 jaar.</p>
-		<p>Iedereen mag meedoen, ook als je niet lid bent van scouting!</p>
+		<p>Halloween zit er aan te komen, de tijd om te griezelen! Daarom organiseeren scouting IJsselgroep en scouting Kompasnaald op zaterdagavond 24 oktober een spooktocht voor iedereen van 7 tot 16 jaar.</p>
+		<p>Iedereen mag meedoen, ook als je geen lid bent van scouting!</p>
 
 		<p class="registration-cta"><a class="submit-button" href="#aanmelden">Direct aanmelden</a></p>
 
@@ -612,7 +612,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		<div class="info-block">
 			<h2>Wat kost het: € 5,- per persoon</h2>
 			<img class="pesos" src="img/pesos-mexican.png" alt="Pesos Mexican" />
-			<p>De kosten voor deelname zijn € 5,- per persoon (deelnemers en begeleiders). Dit kan contant worden betaald bij de start van de spooktocht.</p>
+			<p>De kosten voor deelname zijn € 5,- per deelnemer (voor de begeleiders vragen we geen bijdrage). Dit kan contant worden betaald bij de start van de spooktocht.</p>
 			<p>Leden van scouting IJsselgroep en scouting Kompasnaald kunnen gratis deelnemen.</p>
 		</div>
 
@@ -620,7 +620,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		<div class="info-block">
 			<h2>Hoe ziet de avond er uit</h2>
 			<p>Voor de aanmeldingen van groepjes met kinderen tot 12 jaar vragen we om één volwassen begeleider mee te laten lopen.</p>
-			<p>We beginnen met een verhaal, waarna de tocht in kleine groepjes van ca 5 kinderen wordt gelopen. Bij terugkomst is wat te drinken en wat lekkers bij het kampvuur.</p>
+			<p>We beginnen met een verhaal, waarna de tocht in kleine groepjes van ca 5 kinderen wordt gelopen. Bij terugkomst is er wat te drinken en wat lekkers bij het kampvuur.</p>
 			<p>De wandeling zelf is nog geen 3 kilometer dus voor iedereen goed te doen.<br />
 				De spooktocht is buiten, dus trek warme kleding aan en schoenen die tegen een beetje modder kunnen.</p>
 			<p>Tijdens de wandeling willen we niet dat er zaklampen of mobieltjes worden gebruikt, zodat iedereen de ervaring van de 	tocht beleeft.</p>
