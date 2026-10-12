@@ -67,21 +67,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 				$participantInput = [];
 			}
 
+			$nameInput = is_string($participantInput['name'] ?? null) ? trim($participantInput['name']) : '';
 			$ageInput = is_string($participantInput['age'] ?? null) ? trim($participantInput['age']) : '';
 
+			if ($nameInput === '' || mb_strlen($nameInput) > 120) {
+				$errors[] = 'Vul voor iedere deelnemer een naam in van maximaal 120 tekens.';
+			}
 			if ($ageInput === '' || filter_var($ageInput, FILTER_VALIDATE_INT) === false) {
 				$errors[] = 'Vul een geldige leeftijd in voor iedere geselecteerde deelnemer.';
 			}
 
 			if ($ageInput !== '' && filter_var($ageInput, FILTER_VALIDATE_INT) !== false) {
 				$age = (int) $ageInput;
-				$minimumAge = $ageGroup === '7-12' ? 7 : 12;
-				$maximumAge = $ageGroup === '7-12' ? 12 : 16;
+				$minimumAge = $ageGroup === '7-12' ? 6 : 13;
+				$maximumAge = $ageGroup === '7-12' ? 11 : 17;
 				if ($age < $minimumAge || $age > $maximumAge) {
 					$errors[] = "De leeftijd van deelnemer {$number} past niet bij de gekozen leeftijdsgroep.";
 				}
 				$participants[] = [
 					'number' => $number,
+					'name' => $nameInput,
 					'age' => $age,
 				];
 			}
@@ -153,12 +158,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 								id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 								registration_id BIGINT UNSIGNED NOT NULL,
 								participant_number TINYINT UNSIGNED NOT NULL,
+								`name` VARCHAR(120) NOT NULL,
 								age TINYINT UNSIGNED NOT NULL,
 								CONSTRAINT fk_registration_participants_registration
 									FOREIGN KEY (registration_id) REFERENCES registrations(id) ON DELETE CASCADE,
 								UNIQUE KEY uq_registration_participant (registration_id, participant_number)
 							) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
 						);
+						$participantNameColumn = $pdo->query("SHOW COLUMNS FROM registration_participants LIKE 'name'");
+						if (!$participantNameColumn->fetch()) {
+							$pdo->exec("ALTER TABLE registration_participants ADD COLUMN `name` VARCHAR(120) NOT NULL DEFAULT '' AFTER participant_number");
+						}
 
 						$pdo->beginTransaction();
 						$registrationQuery = $pdo->prepare(
@@ -176,13 +186,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 						]);
 						$registrationId = $pdo->lastInsertId();
 						$participantQuery = $pdo->prepare(
-							'INSERT INTO registration_participants (registration_id, participant_number, age)
-							VALUES (:registration_id, :participant_number, :age)'
+							'INSERT INTO registration_participants (registration_id, participant_number, `name`, age)
+							VALUES (:registration_id, :participant_number, :name, :age)'
 						);
 						foreach ($participants as $participant) {
 							$participantQuery->execute([
 								'registration_id' => $registrationId,
 								'participant_number' => $participant['number'],
+								'name' => $participant['name'],
 								'age' => $participant['age'],
 							]);
 						}
@@ -208,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 						$mailBody[] = '';
 						$mailBody[] = 'Deelnemers:';
 						foreach ($participants as $participant) {
-							$mailBody[] = 'Deelnemer ' . $participant['number'] . ': ' . $participant['age'] . ' jaar';
+							$mailBody[] = 'Deelnemer ' . $participant['number'] . ': ' . $participant['name'] . ', ' . $participant['age'] . ' jaar';
 						}
 						$mailBody[] = 'Opmerkingen (allergieën/diëten): ' . ($remarks !== '' ? $remarks : 'Geen opgegeven');
 						$mailBody[] = '';
@@ -527,7 +538,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		}
 
 		.participant-fields {
-			max-width: 12rem;
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) 5rem;
+			gap: 0.75rem;
+			align-items: end;
 		}
 
 		.form-errors,
@@ -700,12 +714,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 						if (!is_array($participantValues)) {
 							$participantValues = [];
 						}
+						$participantName = is_string($participantValues['name'] ?? null) ? $participantValues['name'] : '';
 						$participantAge = is_string($participantValues['age'] ?? null) ? $participantValues['age'] : '';
 					?>
 						<div class="form-field participant-field" <?= $number > $participantCount ? 'hidden' : '' ?>>
 							<div class="participant-fields">
-								<label for="participant-<?= $number ?>-age">Leeftijd deelnemer <?= $number ?></label>
-								<input id="participant-<?= $number ?>-age" type="number" name="participants[<?= $number ?>][age]" min="7" max="16" value="<?= $escape($participantAge) ?>" <?= $number <= $participantCount ? 'required' : 'disabled' ?>>
+								<div>
+									<label for="participant-<?= $number ?>-name">Naam deelnemer <?= $number ?></label>
+									<input id="participant-<?= $number ?>-name" type="text" name="participants[<?= $number ?>][name]" maxlength="120" value="<?= $escape($participantName) ?>" <?= $number <= $participantCount ? 'required' : 'disabled' ?>>
+								</div>
+								<div>
+									<label for="participant-<?= $number ?>-age">Leeftijd</label>
+									<input id="participant-<?= $number ?>-age" type="number" name="participants[<?= $number ?>][age]" min="7" max="16" value="<?= $escape($participantAge) ?>" <?= $number <= $participantCount ? 'required' : 'disabled' ?>>
+								</div>
 							</div>
 						</div>
 					<?php endfor; ?>
@@ -750,16 +771,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 			const participantCount = Number(participantCountInput.value);
 			for (const [index, field] of participantFields.entries()) {
-				const input = field.querySelector('input');
 				const isSelected = index < participantCount;
 				field.hidden = !isSelected;
-				input.disabled = !isSelected;
-				input.required = isSelected;
+				for (const input of field.querySelectorAll('input')) {
+					input.disabled = !isSelected;
+					input.required = isSelected;
+				}
 			}
 
 			for (const input of participantAgeInputs) {
-				input.min = selectedGroup === '12-16' ? '12' : '7';
-				input.max = selectedGroup === '7-12' ? '12' : '16';
+				input.min = selectedGroup === '12-16' ? '13' : '6';
+				input.max = selectedGroup === '7-12' ? '11' : '17';
 			}
 		}
 
