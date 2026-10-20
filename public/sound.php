@@ -112,13 +112,41 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 			min-height: 100px;
 			align-items: center;
 			gap: 1rem;
-			padding: 1rem 3.75rem 1rem 1.25rem;
+			padding: 1rem 4.5rem 1rem 1.25rem;
 			border: 0;
 			background: transparent;
 			color: inherit;
 			font: inherit;
 			text-align: left;
 			cursor: pointer;
+		}
+
+		.sound-duration {
+			position: absolute;
+			top: 0.65rem;
+			right: 0.65rem;
+			color: #d8cbdc;
+			font-size: 0.8rem;
+			font-variant-numeric: tabular-nums;
+		}
+
+		.sound-progress {
+			position: absolute;
+			right: 0;
+			bottom: 0;
+			left: 0;
+			display: block;
+			height: 6px;
+			background: rgb(237 125 49 / 18%);
+			pointer-events: none;
+		}
+
+		.sound-progress-bar {
+			display: block;
+			width: 0;
+			height: 100%;
+			background: #ed7d31;
+			transition: width 120ms linear;
 		}
 
 		.sound-play:focus-visible,
@@ -222,6 +250,7 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 							<span class="play-icon" aria-hidden="true"><i class="fas fa-play"></i></span>
 							<span class="sound-title"><?= $escape($track['title']) ?></span>
 						</button>
+						<span class="sound-duration" aria-label="Duur wordt geladen">--:--</span>
 						<button
 							class="repeat-toggle"
 							type="button"
@@ -230,6 +259,7 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 							title="Herhalen aan/uit"
 						><i class="fas fa-redo-alt" aria-hidden="true"></i></button>
 						<audio preload="auto" src="<?= $escape($track['url']) ?>"></audio>
+						<span class="sound-progress" aria-hidden="true"><span class="sound-progress-bar"></span></span>
 					</article>
 				<?php endforeach; ?>
 			</section>
@@ -259,6 +289,7 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 			const audio = tile.querySelector('audio');
 			audio.pause();
 			audio.currentTime = 0;
+			tile.querySelector('.sound-progress-bar').style.width = '0';
 			audio.loop = false;
 			setPlaybackState(tile, false);
 			const repeatButton = tile.querySelector('.repeat-toggle');
@@ -274,13 +305,45 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 			const audio = tile.querySelector('audio');
 			const playButton = tile.querySelector('.sound-play');
 			const repeatButton = tile.querySelector('.repeat-toggle');
+			const durationLabel = tile.querySelector('.sound-duration');
+			const progressBar = tile.querySelector('.sound-progress-bar');
 			const title = tile.querySelector('.sound-title').textContent;
+
+			function updateProgress() {
+				if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+					progressBar.style.width = '0';
+					return;
+				}
+
+				const progress = Math.min(100, Math.max(0, (audio.currentTime / audio.duration) * 100));
+				progressBar.style.width = `${progress}%`;
+			}
+
+			function updateDuration() {
+				if (!Number.isFinite(audio.duration)) {
+					return;
+				}
+
+				const totalSeconds = Math.floor(audio.duration);
+				const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+				const seconds = String(totalSeconds % 60).padStart(2, '0');
+				const duration = `${minutes}:${seconds}`;
+				durationLabel.textContent = duration;
+				durationLabel.setAttribute('aria-label', `Duur ${duration}`);
+			}
+
+			audio.addEventListener('loadedmetadata', updateDuration);
+			audio.addEventListener('durationchange', updateDuration);
+			audio.addEventListener('timeupdate', updateProgress);
+			updateDuration();
+			updateProgress();
 
 			playButton.addEventListener('click', async () => {
 				if (activeTile === tile) {
 					if (audio.paused) {
 						try {
 							audio.currentTime = 0;
+							updateProgress();
 							await audio.play();
 							setPlaybackState(tile, true);
 							status.textContent = `${title} ${audio.loop ? 'wordt opnieuw afgespeeld en herhaald' : 'wordt opnieuw afgespeeld'}.`;
@@ -302,6 +365,7 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 
 				activeTile = tile;
 				audio.currentTime = 0;
+				updateProgress();
 				audio.loop = repeatButton.getAttribute('aria-pressed') === 'true';
 				setPlaybackState(tile, true);
 
@@ -326,6 +390,7 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 				}
 			});
 			audio.addEventListener('ended', () => {
+				updateProgress();
 				setPlaybackState(tile, false);
 				if (activeTile === tile) {
 					activeTile = null;
