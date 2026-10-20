@@ -137,7 +137,7 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 			left: 0;
 			display: block;
 			height: 6px;
-			background: rgb(237 125 49 / 18%);
+			z-index: 1;
 			pointer-events: none;
 		}
 
@@ -145,8 +145,19 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 			display: block;
 			width: 0;
 			height: 100%;
-			background: #ed7d31;
-			transition: width 120ms linear;
+			background: rgb(255 184 120 / 50%);
+			transition: width 80ms linear;
+		}
+
+		.sound-waveform {
+			position: absolute;
+			right: 0;
+			bottom: 0;
+			left: 0;
+			display: block;
+			width: 100%;
+			height: 12px;
+			pointer-events: none;
 		}
 
 		.sound-play:focus-visible,
@@ -259,6 +270,7 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 							title="Herhalen aan/uit"
 						><i class="fas fa-redo-alt" aria-hidden="true"></i></button>
 						<audio preload="auto" src="<?= $escape($track['url']) ?>"></audio>
+						<canvas class="sound-waveform" aria-hidden="true"></canvas>
 						<span class="sound-progress" aria-hidden="true"><span class="sound-progress-bar"></span></span>
 					</article>
 				<?php endforeach; ?>
@@ -273,6 +285,8 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 	<script>
 		const tiles = [...document.querySelectorAll('.sound-tile')];
 		const status = document.querySelector('.status');
+		const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+		let audioContext = null;
 		let activeTile = null;
 
 		function setPlaybackState(tile, isPlaying) {
@@ -307,7 +321,108 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 			const repeatButton = tile.querySelector('.repeat-toggle');
 			const durationLabel = tile.querySelector('.sound-duration');
 			const progressBar = tile.querySelector('.sound-progress-bar');
+			const waveformCanvas = tile.querySelector('.sound-waveform');
+			const waveformContext = waveformCanvas.getContext('2d');
 			const title = tile.querySelector('.sound-title').textContent;
+			let waveform = null;
+			let waveformPromise = null;
+			let progressTimer = null;
+
+			function drawWaveform() {
+				if (!waveform || !waveformContext) {
+					return;
+				}
+
+				const bounds = waveformCanvas.getBoundingClientRect();
+				const pixelRatio = window.devicePixelRatio || 1;
+				const canvasWidth = Math.round(bounds.width * pixelRatio);
+				const canvasHeight = Math.round(bounds.height * pixelRatio);
+				if (waveformCanvas.width !== canvasWidth || waveformCanvas.height !== canvasHeight) {
+					waveformCanvas.width = canvasWidth;
+					waveformCanvas.height = canvasHeight;
+				}
+
+				waveformContext.clearRect(0, 0, canvasWidth, canvasHeight);
+				const barCount = Math.min(waveform.length, Math.max(1, Math.floor(bounds.width / 3)));
+				const barWidth = canvasWidth / barCount;
+				for (let index = 0; index < barCount; index++) {
+					const start = Math.floor(index * waveform.length / barCount);
+					const end = Math.max(start + 1, Math.floor((index + 1) * waveform.length / barCount));
+					let peak = 0;
+					for (let sampleIndex = start; sampleIndex < end; sampleIndex++) {
+						peak = Math.max(peak, waveform[sampleIndex]);
+					}
+					const barHeight = Math.max(pixelRatio, peak * canvasHeight);
+					waveformContext.fillStyle = '#ed7d31';
+					waveformContext.fillRect(index * barWidth, canvasHeight - barHeight, Math.max(1, barWidth * 0.7), barHeight);
+				}
+			}
+
+			async function loadWaveform() {
+				if (waveform || waveformPromise || !AudioContextClass || !waveformContext) {
+					return;
+				}
+
+				waveformPromise = (async () => {
+					if (!audioContext) {
+						audioContext = new AudioContextClass();
+					}
+					const response = await fetch(audio.currentSrc || audio.src);
+					if (!response.ok) {
+						throw new Error(`Audio laden mislukt: HTTP ${response.status}`);
+					}
+
+					const audioBuffer = await audioContext.decodeAudioData(await response.arrayBuffer());
+					const channelCount = audioBuffer.numberOfChannels;
+					const sampleCount = audioBuffer.length;
+					const bucketCount = Math.min(2048, sampleCount);
+					const peaks = new Float32Array(bucketCount);
+					for (let channel = 0; channel < channelCount; channel++) {
+						const samples = audioBuffer.getChannelData(channel);
+						for (let bucket = 0; bucket < bucketCount; bucket++) {
+							const start = Math.floor(bucket * sampleCount / bucketCount);
+							const end = Math.max(start + 1, Math.floor((bucket + 1) * sampleCount / bucketCount));
+							let peak = 0;
+							const sampleStep = Math.max(1, Math.floor((end - start) / 256));
+							for (let sampleIndex = start; sampleIndex < end; sampleIndex += sampleStep) {
+								peak = Math.max(peak, Math.abs(samples[sampleIndex]));
+							}
+							peaks[bucket] = Math.max(peaks[bucket], peak);
+						}
+					}
+
+					waveform = peaks;
+					drawWaveform();
+				})().catch((error) => {
+					console.error(`Kon de volumetijdlijn voor ${title} niet maken.`, error);
+				}).finally(() => {
+					waveformPromise = null;
+				});
+				return waveformPromise;
+			}
+
+			function startWaveform() {
+				if (!AudioContextClass) {
+					console.error('De browser ondersteunt geen Web Audio API; de volumetijdlijn is niet beschikbaar.');
+					return;
+				}
+
+				try {
+					if (!audioContext) {
+						audioContext = new AudioContextClass();
+					}
+					if (audioContext.state === 'suspended') {
+						audioContext.resume().catch((error) => {
+							console.error('Kon de audio-context niet hervatten voor de volumetijdlijn.', error);
+						});
+					}
+					void loadWaveform();
+				} catch (error) {
+					console.error(`Kon de volumetijdlijn voor ${title} niet starten.`, error);
+				}
+			}
+
+			void loadWaveform();
 
 			function updateProgress() {
 				if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
@@ -317,6 +432,13 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 
 				const progress = Math.min(100, Math.max(0, (audio.currentTime / audio.duration) * 100));
 				progressBar.style.width = `${progress}%`;
+			}
+
+			function stopProgressUpdates() {
+				if (progressTimer !== null) {
+					window.clearInterval(progressTimer);
+					progressTimer = null;
+				}
 			}
 
 			function updateDuration() {
@@ -335,6 +457,12 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 			audio.addEventListener('loadedmetadata', updateDuration);
 			audio.addEventListener('durationchange', updateDuration);
 			audio.addEventListener('timeupdate', updateProgress);
+			audio.addEventListener('playing', () => {
+				if (progressTimer === null) {
+					progressTimer = window.setInterval(updateProgress, 1000 / 12);
+				}
+			});
+			audio.addEventListener('pause', stopProgressUpdates);
 			updateDuration();
 			updateProgress();
 
@@ -344,6 +472,7 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 						try {
 							audio.currentTime = 0;
 							updateProgress();
+							startWaveform();
 							await audio.play();
 							setPlaybackState(tile, true);
 							status.textContent = `${title} ${audio.loop ? 'wordt opnieuw afgespeeld en herhaald' : 'wordt opnieuw afgespeeld'}.`;
@@ -353,6 +482,8 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 						}
 					} else {
 						audio.pause();
+						audio.currentTime = 0;
+						updateProgress();
 						setPlaybackState(tile, false);
 						status.textContent = `${title} gepauzeerd.`;
 					}
@@ -370,6 +501,7 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 				setPlaybackState(tile, true);
 
 				try {
+					startWaveform();
 					await audio.play();
 					status.textContent = `${title} ${audio.loop ? 'wordt herhaald' : 'wordt afgespeeld'}.`;
 				} catch (error) {
@@ -390,7 +522,8 @@ $escape = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES
 				}
 			});
 			audio.addEventListener('ended', () => {
-				updateProgress();
+				stopProgressUpdates();
+				progressBar.style.width = '0';
 				setPlaybackState(tile, false);
 				if (activeTile === tile) {
 					activeTile = null;
